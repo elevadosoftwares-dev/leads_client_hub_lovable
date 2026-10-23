@@ -1,0 +1,4 @@
+- Data lives in SQL Server (`DATABASE_URL` in `.env`). `database/schema.sql` is idempotent and applied automatically on first connection; add schema changes there as `IF ... IS NULL` guarded statements.
+- Browser code reaches the database only through server functions in `src/lib/crm.functions.ts`; `src/server/*` is server-only (the build fails if browser code imports it).
+- CRM screens share one provider (`src/lib/crm.tsx`, `useCrm()`), which updates the cached data immediately and then saves; master-list edits propagate to associated clients and contacts (in the UI and in one SQL transaction) to keep dropdown values consistent.
+- CRM field limits and all-field search live in browser-safe shared rules (`src/lib/crm-rules.ts`) with focused tests; server validation in `crm.functions.ts` uses the same limits.
