@@ -26,7 +26,7 @@ import { fmtDate, initials, useCrm } from "@/lib/crm";
 import { matchesClientSearch } from "@/lib/crm-rules";
 import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute("/_authenticated/")({
   head: () => ({
     meta: [
       { title: "Clients — Leads" },
@@ -46,7 +46,7 @@ export const Route = createFileRoute("/")({
 const PAGE = 5;
 
 function ClientsPage() {
-  const { clients, masterLists } = useCrm();
+  const { clients, masterLists, isAdmin, loading } = useCrm();
   const [q, setQ] = useState("");
   const [type, setType] = useState("");
   const [nat, setNat] = useState("");
@@ -128,13 +128,17 @@ function ClientsPage() {
         title="Clients"
         subtitle="Manage your client relationships, contacts and opportunities"
         actions={
-          <Link to="/clients/new">
-            <Btn>
-              <Plus className="size-4" /> Add Contact Person
-            </Btn>
-          </Link>
+          isAdmin ? (
+            <Link to="/clients/new">
+              <Btn>
+                <Plus className="size-4" /> Add Contact Person
+              </Btn>
+            </Link>
+          ) : undefined
         }
       />
+
+      {loading && <p className="mb-4 text-sm text-muted-foreground">Loading clients...</p>}
 
       <div className="mb-6 grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
         {stats.map((s) => (
@@ -272,11 +276,13 @@ function ClientsPage() {
                             <Eye className="size-4" />
                           </IconBtn>
                         </Link>
-                        <Link to="/clients/$id" params={{ id: c.id }}>
-                          <IconBtn aria-label="Edit">
-                            <Pencil className="size-4" />
-                          </IconBtn>
-                        </Link>
+                        {isAdmin && (
+                          <Link to="/clients/$id" params={{ id: c.id }}>
+                            <IconBtn aria-label="Edit">
+                              <Pencil className="size-4" />
+                            </IconBtn>
+                          </Link>
+                        )}
                       </div>
                     </td>
                   </tr>

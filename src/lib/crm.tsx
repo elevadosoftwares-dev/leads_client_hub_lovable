@@ -1,20 +1,19 @@
-import { createContext, useContext, useEffect, useRef, type ReactNode } from "react";
+import type React from "react";
+import { createContext, useContext, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
+import { getSession } from "@/lib/auth.functions";
+import * as api from "@/lib/crm.functions";
 import { limitClientFields } from "@/lib/crm-rules";
-import {
-  addMasterOption as addMasterOptionFn,
-  deleteClient,
-  deleteContact,
-  getCrmData,
-  removeMasterOption as removeMasterOptionFn,
-  renameMasterOption as renameMasterOptionFn,
-  saveClient,
-  saveContact,
-  type CrmData,
-} from "@/lib/crm.functions";
 
+export const CLIENT_TYPES = [
+  "Lead",
+  "Contacted",
+  "Existing Client",
+  "Potential Contact",
+  "Bad Lead",
+] as const;
 export type ClientType = string;
 export const RELATIONSHIPS = ["Best", "Good", "Not Good"] as const;
 export type MasterKey = "types" | "departments" | "nationalities" | "religions";
@@ -48,7 +47,7 @@ export type Client = {
   type: ClientType;
   departments: string[];
   talent?: string;
-  relationship?: (typeof RELATIONSHIPS)[number];
+  relationship?: string;
   blocked: boolean;
   blockReason?: string | undefined;
   blockedOn?: string | undefined;
@@ -57,188 +56,246 @@ export type Client = {
   contacts: Contact[];
 };
 
-/** Random id that also works on plain-http hosts, where crypto.randomUUID is unavailable. */
-export const uid = () =>
-  Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) =>
-    b.toString(16).padStart(2, "0"),
-  ).join("");
+export const uid = () => crypto.randomUUID();
 
 type Ctx = {
-  status: "loading" | "error" | "ready";
-  retry: () => void;
   clients: Client[];
   masterLists: MasterLists;
-  addMasterOption: (key: MasterKey, value: string) => void;
-  renameMasterOption: (key: MasterKey, oldValue: string, value: string) => void;
-  removeMasterOption: (key: MasterKey, value: string) => void;
-  addClient: (c: Client) => void;
-  updateClient: (id: string, patch: Partial<Client>) => void;
-  upsertContact: (clientId: string, contact: Contact) => void;
-  removeContact: (clientId: string, contactId: string) => void;
-  removeClient: (id: string) => void;
+  loading: boolean;
+  role: "admin" | "user" | null;
+  isAdmin: boolean;
+  userEmail: string | null;
+  addMasterOption: (key: MasterKey, value: string) => Promise<boolean>;
+  renameMasterOption: (key: MasterKey, oldValue: string, value: string) => Promise<boolean>;
+  removeMasterOption: (key: MasterKey, value: string) => Promise<boolean>;
+  addClient: (c: Client) => Promise<boolean>;
+  updateClient: (id: string, patch: Partial<Client>) => Promise<boolean>;
+  upsertContact: (clientId: string, contact: Contact) => Promise<boolean>;
+  removeContact: (clientId: string, contactId: string) => Promise<boolean>;
+  removeClient: (id: string) => Promise<boolean>;
 };
 
-const CrmContext = createContext<Ctx | null>(null);
+/* eslint-disable @typescript-eslint/no-explicit-any */
+const toContact = (r: any): Contact => ({
+  id: r.id,
+  name: r.name,
+  designation: r.designation,
+  nationality: r.nationality,
+  dob: r.dob ?? "",
+  race: r.race,
+  gender: r.gender,
+  religion: r.religion,
+  phone: r.phone,
+  email: r.email,
+  reminder: r.reminder ?? "",
+  notes: r.notes,
+  talent: r.talent,
+  relationship: r.relationship,
+});
 
-export const CRM_QUERY_KEY = ["crm"] as const;
-const EMPTY: CrmData = {
-  clients: [],
-  masterLists: { types: [], departments: [], nationalities: [], religions: [] },
+const toClient = (r: any, contacts: Contact[]): Client => ({
+  id: r.id,
+  company: r.company,
+  industry: r.industry,
+  location: r.location,
+  website: r.website,
+  type: r.type,
+  departments: r.departments ?? [],
+  talent: r.talent,
+  relationship: r.relationship,
+  blocked: r.blocked,
+  blockReason: r.block_reason ?? undefined,
+  blockedOn: r.blocked_on ?? undefined,
+  lastContact: r.last_contact ?? "",
+  notes: r.notes,
+  contacts,
+});
+
+const clientRow = (c: Client) => ({
+  company: c.company,
+  industry: c.industry,
+  location: c.location,
+  website: c.website,
+  type: c.type,
+  departments: c.departments,
+  talent: c.talent ?? "",
+  relationship: c.relationship ?? "",
+  blocked: c.blocked,
+  block_reason: c.blockReason ?? null,
+  blocked_on: c.blockedOn ?? null,
+  last_contact: c.lastContact || null,
+  notes: c.notes,
+});
+
+const contactRow = (clientId: string, k: Contact) => ({
+  client_id: clientId,
+  name: k.name,
+  designation: k.designation,
+  nationality: k.nationality,
+  dob: k.dob || null,
+  race: k.race,
+  gender: k.gender,
+  religion: k.religion,
+  phone: k.phone,
+  email: k.email,
+  reminder: k.reminder || null,
+  notes: k.notes,
+  talent: k.talent ?? "",
+  relationship: k.relationship ?? "",
+});
+
+const patchRow = (p: Partial<Client>): any => {
+  const r: Record<string, unknown> = {};
+  if (p.company !== undefined) r["company"] = p.company;
+  if (p.industry !== undefined) r["industry"] = p.industry;
+  if (p.location !== undefined) r["location"] = p.location;
+  if (p.website !== undefined) r["website"] = p.website;
+  if (p.type !== undefined) r["type"] = p.type;
+  if (p.departments !== undefined) r["departments"] = p.departments;
+  if (p.talent !== undefined) r["talent"] = p.talent;
+  if (p.relationship !== undefined) r["relationship"] = p.relationship;
+  if (p.blocked !== undefined) r["blocked"] = p.blocked;
+  if (p.blockReason !== undefined) r["block_reason"] = p.blockReason ?? null;
+  if (p.blockedOn !== undefined) r["blocked_on"] = p.blockedOn ?? null;
+  if (p.lastContact !== undefined) r["last_contact"] = p.lastContact || null;
+  if (p.notes !== undefined) r["notes"] = p.notes;
+  return r;
 };
-/** Typing into a client field saves once the user pauses, not on every keystroke. */
-const CLIENT_SAVE_DELAY_MS = 400;
+/* eslint-enable @typescript-eslint/no-explicit-any */
 
-/** Server errors arrive as plain messages; validation errors as a JSON list of issues. */
-function errorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  try {
-    const issues = JSON.parse(message) as { message?: string }[];
-    if (Array.isArray(issues) && issues[0]?.message) return issues[0].message;
-  } catch {
-    // Not JSON - use the message as is.
-  }
-  return message || "Something went wrong.";
-}
+const g = globalThis as unknown as { __crmCtx?: React.Context<Ctx | null> };
+const CrmContext = (g.__crmCtx ??= createContext<Ctx | null>(null));
 
-const toClientInput = ({ contacts: _contacts, ...client }: Client) => client;
+const emptyLists: MasterLists = { types: [], departments: [], nationalities: [], religions: [] };
 
-/**
- * Holds the CRM data loaded from SQL Server. Changes are applied to the cached data right away
- * (so the screens stay responsive) and then saved through server functions; if a save fails,
- * the user sees why and the data is reloaded from the database.
- */
 export function CrmProvider({ children }: { children: ReactNode }) {
-  const queryClient = useQueryClient();
-  const query = useQuery({
-    queryKey: CRM_QUERY_KEY,
-    queryFn: () => getCrmData(),
-    refetchOnWindowFocus: false,
+  const qc = useQueryClient();
+
+  const sessionQ = useQuery({
+    queryKey: ["session"],
+    queryFn: () => getSession(),
+    staleTime: 60_000,
   });
-  const data = query.data ?? EMPTY;
-  const clientSaveTimers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const userId = sessionQ.data?.id;
+  const role = sessionQ.data?.role ?? null;
 
-  useEffect(() => {
-    const timers = clientSaveTimers.current;
-    return () => timers.forEach((timer) => clearTimeout(timer));
-  }, []);
+  const clientsQ = useQuery({
+    queryKey: ["clients"],
+    enabled: !!userId,
+    queryFn: async () =>
+      (await api.listClients()).map((c) => toClient(c, c.contacts.map(toContact))),
+  });
 
-  const current = () => queryClient.getQueryData<CrmData>(CRM_QUERY_KEY) ?? EMPTY;
-  const change = (fn: (d: CrmData) => CrmData) =>
-    queryClient.setQueryData<CrmData>(CRM_QUERY_KEY, (d) => fn(d ?? EMPTY));
-  const persist = (save: Promise<unknown>) =>
-    save.catch((error: unknown) => {
-      toast.error(errorMessage(error));
-      void queryClient.invalidateQueries({ queryKey: CRM_QUERY_KEY });
-    });
-  const saveClientNow = (id: string) => {
-    clearTimeout(clientSaveTimers.current.get(id));
-    clientSaveTimers.current.delete(id);
-    const client = current().clients.find((c) => c.id === id);
-    if (client) return persist(saveClient({ data: toClientInput(client) }));
-    return Promise.resolve();
+  const mastersQ = useQuery({
+    queryKey: ["master-options"],
+    enabled: !!userId,
+    queryFn: async () => {
+      const data = await api.listMasterOptions();
+      const lists: MasterLists = { types: [], departments: [], nationalities: [], religions: [] };
+      for (const row of data ?? []) {
+        if (row.category in lists) lists[row.category as MasterKey].push(row.value);
+      }
+      return lists;
+    },
+  });
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["clients"] });
+    qc.invalidateQueries({ queryKey: ["master-options"] });
   };
-  const scheduleClientSave = (id: string) => {
-    clearTimeout(clientSaveTimers.current.get(id));
-    clientSaveTimers.current.set(
-      id,
-      setTimeout(() => void saveClientNow(id), CLIENT_SAVE_DELAY_MS),
-    );
+  const fail = (message: string, e: unknown): false => {
+    console.error(e);
+    toast.error(message);
+    return false;
   };
-  const setClients = (fn: (clients: Client[]) => Client[]) =>
-    change((d) => ({ ...d, clients: fn(d.clients) }));
 
   const value: Ctx = {
-    status: query.data ? "ready" : query.isError ? "error" : "loading",
-    retry: () => void query.refetch(),
-    clients: data.clients,
-    masterLists: data.masterLists,
-    addMasterOption: (key, value) => {
-      change((d) => ({
-        ...d,
-        masterLists: { ...d.masterLists, [key]: [...d.masterLists[key], value] },
-      }));
-      void persist(addMasterOptionFn({ data: { key, value } }));
+    clients: clientsQ.data ?? [],
+    masterLists: mastersQ.data ?? emptyLists,
+    loading: !!userId && (clientsQ.isLoading || mastersQ.isLoading),
+    role,
+    isAdmin: role === "admin",
+    userEmail: sessionQ.data?.email ?? null,
+
+    addClient: async (c) => {
+      try {
+        await api.addClient({ data: clientRow(limitClientFields(c)) });
+      } catch (e) {
+        return fail("Could not add the client. Only admins can make changes.", e);
+      }
+      refresh();
+      return true;
     },
-    renameMasterOption: (key, oldValue, value) => {
-      change((d) => ({
-        masterLists: {
-          ...d.masterLists,
-          [key]: d.masterLists[key].map((entry) => (entry === oldValue ? value : entry)),
-        },
-        clients: d.clients.map((client) => ({
-          ...client,
-          type: key === "types" && client.type === oldValue ? value : client.type,
-          departments:
-            key === "departments"
-              ? [
-                  ...new Set(
-                    client.departments.map((entry) => (entry === oldValue ? value : entry)),
-                  ),
-                ]
-              : client.departments,
-          contacts: client.contacts.map((contact) => ({
-            ...contact,
-            nationality:
-              key === "nationalities" && contact.nationality === oldValue
-                ? value
-                : contact.nationality,
-            religion:
-              key === "religions" && contact.religion === oldValue ? value : contact.religion,
-          })),
-        })),
-      }));
-      void persist(renameMasterOptionFn({ data: { key, oldValue, value } }));
+
+    updateClient: async (id, patch) => {
+      try {
+        await api.updateClient({ data: { id, patch: patchRow(patch) } });
+      } catch (e) {
+        return fail("Could not save. Only admins can make changes.", e);
+      }
+      refresh();
+      return true;
     },
-    removeMasterOption: (key, value) => {
-      change((d) => ({
-        ...d,
-        masterLists: {
-          ...d.masterLists,
-          [key]: d.masterLists[key].filter((entry) => entry !== value),
-        },
-      }));
-      void persist(removeMasterOptionFn({ data: { key, value } }));
+
+    upsertContact: async (cid, ct) => {
+      try {
+        await api.upsertContact({ data: { id: ct.id, ...contactRow(cid, ct) } });
+      } catch (e) {
+        return fail("Could not save the contact. Only admins can make changes.", e);
+      }
+      refresh();
+      return true;
     },
-    addClient: (client) => {
-      setClients((cs) => [limitClientFields(client), ...cs]);
-      void saveClientNow(client.id);
+
+    removeContact: async (_cid, kid) => {
+      try {
+        await api.removeContact({ data: { id: kid } });
+      } catch (e) {
+        return fail("Could not remove the contact. Only admins can make changes.", e);
+      }
+      refresh();
+      return true;
     },
-    updateClient: (id, patch) => {
-      setClients((cs) => cs.map((x) => (x.id === id ? limitClientFields({ ...x, ...patch }) : x)));
-      scheduleClientSave(id);
+
+    removeClient: async (id) => {
+      try {
+        await api.removeClient({ data: { id } });
+      } catch (e) {
+        return fail("Could not remove the client. Only admins can make changes.", e);
+      }
+      refresh();
+      return true;
     },
-    upsertContact: (clientId, contact) => {
-      setClients((cs) =>
-        cs.map((x) =>
-          x.id !== clientId
-            ? x
-            : {
-                ...x,
-                contacts: x.contacts.some((k) => k.id === contact.id)
-                  ? x.contacts.map((k) => (k.id === contact.id ? contact : k))
-                  : [...x.contacts, contact],
-              },
-        ),
-      );
-      // A just-created or just-edited client must reach the database before its contacts.
-      const pending = clientSaveTimers.current.has(clientId)
-        ? saveClientNow(clientId)
-        : Promise.resolve();
-      void pending.then(() => persist(saveContact({ data: { clientId, contact } })));
+
+    addMasterOption: async (key, value) => {
+      try {
+        await api.addMasterOption({ data: { category: key, value } });
+      } catch (e) {
+        return fail("Could not add the value. Only admins can make changes.", e);
+      }
+      refresh();
+      return true;
     },
-    removeClient: (id) => {
-      clearTimeout(clientSaveTimers.current.get(id));
-      clientSaveTimers.current.delete(id);
-      setClients((cs) => cs.filter((x) => x.id !== id));
-      void persist(deleteClient({ data: { id } }));
+
+    renameMasterOption: async (key, oldValue, value) => {
+      // The server also renames the value on every client and contact that uses it.
+      try {
+        await api.renameMasterOption({ data: { category: key, oldValue, value } });
+      } catch (e) {
+        return fail("Could not rename the value. Only admins can make changes.", e);
+      }
+      refresh();
+      return true;
     },
-    removeContact: (clientId, contactId) => {
-      setClients((cs) =>
-        cs.map((x) =>
-          x.id !== clientId ? x : { ...x, contacts: x.contacts.filter((k) => k.id !== contactId) },
-        ),
-      );
-      void persist(deleteContact({ data: { id: contactId } }));
+
+    removeMasterOption: async (key, value) => {
+      try {
+        await api.removeMasterOption({ data: { category: key, value } });
+      } catch (e) {
+        return fail("Could not remove the value. Only admins can make changes.", e);
+      }
+      refresh();
+      return true;
     },
   };
 

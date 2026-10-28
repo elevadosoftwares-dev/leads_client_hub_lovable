@@ -133,20 +133,6 @@ export async function request(): Promise<sql.Request> {
   return (await getPool()).request();
 }
 
-/** Runs `work` inside a transaction, committing on success and rolling back on error. */
-export async function transaction<T>(work: (tx: sql.Transaction) => Promise<T>): Promise<T> {
-  const tx = new sql.Transaction(await getPool());
-  await tx.begin();
-  try {
-    const result = await work(tx);
-    await tx.commit();
-    return result;
-  } catch (error) {
-    await tx.rollback().catch(() => {});
-    throw error;
-  }
-}
-
 /** SQL Server error numbers for unique constraint / primary key violations. */
 export function isDuplicateKeyError(error: unknown): boolean {
   const number = (error as { number?: number } | null)?.number;

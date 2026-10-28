@@ -6,7 +6,7 @@ import { fmtDate, useCrm } from "@/lib/crm";
 import { matchesClientSearch } from "@/lib/crm-rules";
 import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/reminders")({
+export const Route = createFileRoute("/_authenticated/reminders")({
   head: () => ({
     meta: [
       { title: "Reminders — Leads" },

@@ -1,4 +1,5 @@
-- Data lives in SQL Server (`DATABASE_URL` in `.env`). `database/schema.sql` is idempotent and applied automatically on first connection; add schema changes there as `IF ... IS NULL` guarded statements.
-- Browser code reaches the database only through server functions in `src/lib/crm.functions.ts`; `src/server/*` is server-only (the build fails if browser code imports it).
-- CRM screens share one provider (`src/lib/crm.tsx`, `useCrm()`), which updates the cached data immediately and then saves; master-list edits propagate to associated clients and contacts (in the UI and in one SQL transaction) to keep dropdown values consistent.
-- CRM field limits and all-field search live in browser-safe shared rules (`src/lib/crm-rules.ts`) with focused tests; server validation in `crm.functions.ts` uses the same limits.
+- Stack: TanStack Start (React + Node server functions) with SQL Server via `mssql`. Server-only code lives in `src/server/*.server.ts` and is loaded with `await import(...)` inside server functions (the build fails if browser code imports `src/server/`); schema changes go in `database/schema.sql` and must stay idempotent (`IF OBJECT_ID(...) IS NULL`).
+- Browser code reaches the database only through server functions in `src/lib/crm.functions.ts` (data), `users.functions.ts` and `auth.functions.ts`.
+- CRM screens share one provider (`src/lib/crm.tsx`, `useCrm()`); master-list renames propagate to clients and contacts in one SQL transaction. `dbo.clients.departments` is a JSON array.
+- Roles are `dbo.users.role` (`admin` | `user`, view only); writes use `requireAdmin`. The first account is created on the sign-in page; admins add the rest. No e-mail: admins reset passwords from Users.
+- CRM field limits and all-field search live in browser-safe shared rules (`src/lib/crm-rules.ts`) with focused tests.

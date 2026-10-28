@@ -1,5 +1,15 @@
-import { Link, useRouterState } from "@tanstack/react-router";
-import { Bell, Ban, LayoutGrid, Loader2, Search, ListChecks } from "lucide-react";
+import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
+import {
+  Bell,
+  Ban,
+  KeyRound,
+  LayoutGrid,
+  LogOut,
+  Search,
+  ListChecks,
+  UsersRound,
+} from "lucide-react";
 import leadsLogo from "@/assets/leads-logo-light.png";
 import type {
   ReactNode,
@@ -8,6 +18,7 @@ import type {
   TextareaHTMLAttributes,
 } from "react";
 import { cn } from "@/lib/utils";
+import { signOut as signOutFn } from "@/lib/auth.functions";
 import type { ClientType, Contact } from "@/lib/crm";
 import { GENDERS, RACES, RELATIONSHIPS, useCrm } from "@/lib/crm";
 
@@ -61,6 +72,21 @@ const nav = [
 
 export function AppShell({ children }: { children: ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
+  const { isAdmin, role, userEmail } = useCrm();
+  const navTo = useNavigate();
+  const queryClient = useQueryClient();
+
+  const signOut = async () => {
+    await queryClient.cancelQueries();
+    queryClient.clear();
+    await signOutFn();
+    navTo({ to: "/auth", replace: true, search: { redirect: "" } });
+  };
+
+  const items = isAdmin
+    ? [...nav, { to: "/users", label: "Users", icon: UsersRound } as const]
+    : nav;
+
   return (
     <div className="flex min-h-screen bg-background">
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col bg-sidebar text-sidebar-foreground md:flex">
@@ -69,8 +95,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             <img src={leadsLogo} alt="Leads" className="h-auto w-full" />
           </Link>
         </div>
-        <nav className="flex flex-col gap-1 px-3">
-          {nav.map((n) => {
+        <nav className="flex flex-1 flex-col gap-1 px-3">
+          {items.map((n) => {
             const active =
               n.to === "/" ? path === "/" || path.startsWith("/clients") : path.startsWith(n.to);
             return (
@@ -89,10 +115,37 @@ export function AppShell({ children }: { children: ReactNode }) {
             );
           })}
         </nav>
+        <div className="mt-auto border-t border-sidebar-accent p-4">
+          <div className="mb-1 truncate text-sm font-medium">{userEmail ?? ""}</div>
+          <div className="mb-3">
+            <span
+              className={cn(
+                "rounded-full px-2.5 py-0.5 text-xs font-semibold",
+                isAdmin
+                  ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                  : "bg-sidebar-accent text-sidebar-foreground",
+              )}
+            >
+              {role === "admin" ? "Admin — can edit" : "User — view only"}
+            </span>
+          </div>
+          <Link
+            to="/reset-password"
+            className="mb-2 flex items-center gap-2 text-sm text-sidebar-foreground/80 hover:text-sidebar-foreground"
+          >
+            <KeyRound className="size-4" /> Change password
+          </Link>
+          <button
+            onClick={signOut}
+            className="flex items-center gap-2 text-sm text-sidebar-foreground/80 hover:text-sidebar-foreground"
+          >
+            <LogOut className="size-4" /> Sign out
+          </button>
+        </div>
       </aside>
       <main className="min-w-0 flex-1 p-4 md:p-8">
-        <nav className="mb-5 flex flex-wrap gap-3 md:hidden">
-          {nav.map((item) => (
+        <nav className="mb-5 flex flex-wrap items-center gap-3 md:hidden">
+          {items.map((item) => (
             <Link
               key={item.to}
               to={item.to}
@@ -102,35 +155,17 @@ export function AppShell({ children }: { children: ReactNode }) {
               {item.label}
             </Link>
           ))}
+          <button
+            onClick={signOut}
+            className="ml-auto flex items-center gap-1 text-sm text-muted-foreground"
+          >
+            <LogOut className="size-4" />
+            Sign out
+          </button>
         </nav>
-        <DataGate>{children}</DataGate>
+        {children}
       </main>
     </div>
-  );
-}
-
-/** Shows the page only once the CRM data has loaded from the database. */
-function DataGate({ children }: { children: ReactNode }) {
-  const { status, retry } = useCrm();
-  if (status === "ready") return <>{children}</>;
-  if (status === "loading") {
-    return (
-      <div className="flex items-center gap-2 p-10 text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" /> Loading clients…
-      </div>
-    );
-  }
-  return (
-    <Card className="max-w-lg">
-      <h2 className="text-lg font-semibold">Could not load data</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        The database could not be reached. Check that SQL Server is running and DATABASE_URL in .env
-        is correct.
-      </p>
-      <Btn className="mt-4" onClick={retry}>
-        Try again
-      </Btn>
-    </Card>
   );
 }
 

@@ -16,7 +16,7 @@ import {
 import { matchesClientSearch } from "@/lib/crm-rules";
 import { fmtDate, useCrm } from "@/lib/crm";
 
-export const Route = createFileRoute("/blocklist")({
+export const Route = createFileRoute("/_authenticated/blocklist")({
   head: () => ({
     meta: [
       { title: "Blocklist — Leads" },
@@ -31,7 +31,7 @@ export const Route = createFileRoute("/blocklist")({
 });
 
 function Blocklist() {
-  const { clients, updateClient } = useCrm();
+  const { clients, updateClient, isAdmin } = useCrm();
   const [q, setQ] = useState("");
   const [adding, setAdding] = useState(false);
   const [pick, setPick] = useState("");
@@ -39,15 +39,16 @@ function Blocklist() {
   const blocked = clients.filter((c) => c.blocked && matchesClientSearch(c, q));
   const active = clients.filter((c) => !c.blocked);
 
-  const add = (e: React.FormEvent) => {
+  const add = async (e: React.FormEvent) => {
     e.preventDefault();
     const c = active.find((x) => x.company === pick);
     if (!c) return;
-    updateClient(c.id, {
+    const ok = await updateClient(c.id, {
       blocked: true,
       blockReason: reason.trim().slice(0, 200) || "No reason given",
       blockedOn: new Date().toISOString().slice(0, 10),
     });
+    if (!ok) return;
     toast.success(`${c.company} blocked`);
     setAdding(false);
     setPick("");
@@ -66,13 +67,15 @@ function Blocklist() {
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search blocked companies..."
             />
-            <Btn variant="danger" onClick={() => setAdding(!adding)}>
-              <Plus className="size-4" /> Add to Blocklist
-            </Btn>
+            {isAdmin && (
+              <Btn variant="danger" onClick={() => setAdding(!adding)}>
+                <Plus className="size-4" /> Add to Blocklist
+              </Btn>
+            )}
           </>
         }
       />
-      {adding && (
+      {adding && isAdmin && (
         <Card className="mb-6">
           <form onSubmit={add} className="grid items-end gap-4 md:grid-cols-[1fr_2fr_auto]">
             <Field label="Company" required>
@@ -132,16 +135,17 @@ function Blocklist() {
                           <Eye className="size-4" />
                         </IconBtn>
                       </Link>
-                      <IconBtn
-                        aria-label="Unblock"
-                        tone="danger"
-                        onClick={() => {
-                          updateClient(c.id, { blocked: false });
-                          toast("Unblocked");
-                        }}
-                      >
-                        <Undo2 className="size-4" />
-                      </IconBtn>
+                      {isAdmin && (
+                        <IconBtn
+                          aria-label="Unblock"
+                          tone="danger"
+                          onClick={async () => {
+                            if (await updateClient(c.id, { blocked: false })) toast("Unblocked");
+                          }}
+                        >
+                          <Undo2 className="size-4" />
+                        </IconBtn>
+                      )}
                     </div>
                   </td>
                 </tr>

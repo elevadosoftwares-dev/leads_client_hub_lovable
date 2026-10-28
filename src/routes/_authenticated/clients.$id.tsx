@@ -28,7 +28,7 @@ import {
 import { SPECIAL_NOTE_LIMIT } from "@/lib/crm-rules";
 import { cn } from "@/lib/utils";
 
-export const Route = createFileRoute("/clients/$id")({
+export const Route = createFileRoute("/_authenticated/clients/$id")({
   head: () => ({
     meta: [
       { title: "Client Details — Leads" },
@@ -51,7 +51,8 @@ const avatarTones = [
 
 function ClientDetails() {
   const { id } = Route.useParams();
-  const { clients, masterLists, updateClient, upsertContact, removeContact } = useCrm();
+  const { clients, masterLists, updateClient, upsertContact, removeContact, isAdmin, loading } =
+    useCrm();
   const client = clients.find((c) => c.id === id);
   const [tab, setTab] = useState<"Contacts" | "Notes" | "Reminders">("Contacts");
   const [editing, setEditing] = useState<Contact | null>(null);
@@ -60,16 +61,22 @@ function ClientDetails() {
     return (
       <AppShell>
         <p className="text-muted-foreground">
-          Client not found.{" "}
-          <Link to="/" className="text-primary">
-            Back to clients
-          </Link>
+          {loading ? (
+            "Loading client..."
+          ) : (
+            <>
+              Client not found.{" "}
+              <Link to="/" className="text-primary">
+                Back to clients
+              </Link>
+            </>
+          )}
         </p>
       </AppShell>
     );
 
-  const toggleBlock = () => {
-    updateClient(
+  const toggleBlock = async () => {
+    const ok = await updateClient(
       client.id,
       client.blocked
         ? { blocked: false, blockReason: undefined, blockedOn: undefined }
@@ -79,7 +86,7 @@ function ClientDetails() {
             blockedOn: new Date().toISOString().slice(0, 10),
           },
     );
-    toast(client.blocked ? "Client unblocked" : "Client added to blocklist");
+    if (ok) toast(client.blocked ? "Client unblocked" : "Client added to blocklist");
   };
 
   return (
@@ -92,9 +99,11 @@ function ClientDetails() {
           </Link>
         }
         actions={
-          <Btn variant="dangerOutline" onClick={toggleBlock}>
-            <Ban className="size-4" /> {client.blocked ? "Unblock Client" : "Block Client"}
-          </Btn>
+          isAdmin ? (
+            <Btn variant="dangerOutline" onClick={toggleBlock}>
+              <Ban className="size-4" /> {client.blocked ? "Unblock Client" : "Block Client"}
+            </Btn>
+          ) : undefined
         }
       />
 
@@ -127,6 +136,7 @@ function ClientDetails() {
           <Field label="Type of contact">
             <Select
               className="max-w-60"
+              disabled={!isAdmin}
               options={masterLists.types}
               value={client.type}
               onChange={(e) => updateClient(client.id, { type: e.target.value as ClientType })}
@@ -137,6 +147,7 @@ function ClientDetails() {
           </div>
           <Field label="Department">
             <Select
+              disabled={!isAdmin}
               options={masterLists.departments}
               placeholder="Select department"
               value={client.departments[0] ?? ""}
@@ -148,6 +159,7 @@ function ClientDetails() {
           <Field label="Relationship with Leads">
             <Select
               className="max-w-60"
+              disabled={!isAdmin}
               options={RELATIONSHIPS}
               placeholder="Select relationship"
               value={client.relationship ?? ""}
@@ -182,9 +194,11 @@ function ClientDetails() {
         <Card className="p-0">
           <div className="flex items-center justify-between p-5">
             <h3 className="text-lg font-semibold">List of Company Employees</h3>
-            <Btn onClick={() => setEditing(emptyContact())}>
-              <Plus className="size-4" /> Add Contact
-            </Btn>
+            {isAdmin && (
+              <Btn onClick={() => setEditing(emptyContact())}>
+                <Plus className="size-4" /> Add Contact
+              </Btn>
+            )}
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -240,18 +254,23 @@ function ClientDetails() {
                     </td>
                     <td className="px-4 py-3">{k.relationship || "—"}</td>
                     <td className="px-4 py-3">
-                      <div className="flex gap-2">
-                        <IconBtn aria-label="Edit" onClick={() => setEditing(k)}>
-                          <Pencil className="size-4" />
-                        </IconBtn>
-                        <IconBtn
-                          aria-label="Delete"
-                          tone="danger"
-                          onClick={() => removeContact(client.id, k.id)}
-                        >
-                          <Trash2 className="size-4" />
-                        </IconBtn>
-                      </div>
+                      {isAdmin && (
+                        <div className="flex gap-2">
+                          <IconBtn aria-label="Edit" onClick={() => setEditing(k)}>
+                            <Pencil className="size-4" />
+                          </IconBtn>
+                          <IconBtn
+                            aria-label="Delete"
+                            tone="danger"
+                            onClick={async () => {
+                              if (await removeContact(client.id, k.id))
+                                toast.success("Contact removed");
+                            }}
+                          >
+                            <Trash2 className="size-4" />
+                          </IconBtn>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -267,6 +286,7 @@ function ClientDetails() {
             <Textarea
               className="min-h-40"
               maxLength={SPECIAL_NOTE_LIMIT}
+              readOnly={!isAdmin}
               value={client.notes}
               onChange={(e) => updateClient(client.id, { notes: e.target.value })}
               placeholder="Write a special note..."
@@ -307,11 +327,12 @@ function ClientDetails() {
         <div className="fixed inset-0 z-50 grid place-items-center bg-foreground/40 p-4">
           <form
             className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-card p-6 shadow-2xl"
-            onSubmit={(e) => {
+            onSubmit={async (e) => {
               e.preventDefault();
-              upsertContact(client.id, editing);
-              setEditing(null);
-              toast.success("Contact saved");
+              if (await upsertContact(client.id, editing)) {
+                setEditing(null);
+                toast.success("Contact saved");
+              }
             }}
           >
             <div className="mb-5 flex items-center justify-between">

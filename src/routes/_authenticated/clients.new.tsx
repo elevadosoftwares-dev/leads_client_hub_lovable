@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { AppShell, Btn, Card, ContactFields, Field, PageHeader, Select } from "@/components/crm/ui";
 import { emptyContact, useCrm } from "@/lib/crm";
 
-export const Route = createFileRoute("/clients/new")({
+export const Route = createFileRoute("/_authenticated/clients/new")({
   head: () => ({
     meta: [
       { title: "Add Contact Person — Leads" },
@@ -20,24 +20,43 @@ export const Route = createFileRoute("/clients/new")({
 });
 
 function NewContact() {
-  const { clients, upsertContact } = useCrm();
+  const { clients, upsertContact, isAdmin } = useCrm();
   const nav = useNavigate();
   const [company, setCompany] = useState("");
   const [contact, setContact] = useState(emptyContact());
 
-  const submit = (e: React.FormEvent) => {
+  if (!isAdmin) {
+    return (
+      <AppShell>
+        <PageHeader
+          title="Add Contact Person"
+          back={
+            <Link to="/" aria-label="Back">
+              <ArrowLeft className="size-5" />
+            </Link>
+          }
+        />
+        <Card>
+          <p className="text-muted-foreground">Only admins can add contact persons.</p>
+        </Card>
+      </AppShell>
+    );
+  }
+
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const client = clients.find((c) => c.company === company);
     if (!client) {
       toast.error("Select a client");
       return;
     }
-    upsertContact(client.id, {
+    const ok = await upsertContact(client.id, {
       ...contact,
       name: contact.name.trim(),
       email: contact.email.trim(),
       talent: (contact.talent ?? "").slice(0, 30),
     });
+    if (!ok) return;
     toast.success("Contact person saved");
     nav({ to: "/clients/$id", params: { id: client.id } });
   };
